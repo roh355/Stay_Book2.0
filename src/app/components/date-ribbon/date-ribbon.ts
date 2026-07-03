@@ -17,9 +17,8 @@ import { ConfirmService } from '../../core/confirm.service';
 import { Stay } from '../../core/models';
 import {
   addDays,
-  dateStackParts,
   dayNum,
-  formatDmy,
+  formatDmyShort,
   isFirstOfMonth,
   monthShort,
   nightsInclusive,
@@ -34,6 +33,10 @@ interface StayBand {
   startIdx: number;
   span: number;
 }
+
+/** Minimum day columns so short searches (e.g. 2 nights) still look balanced. */
+const MIN_GRID_DAYS = 7;
+const DAY_COL_MIN_PX = 64;
 
 @Component({
   selector: 'sb-date-ribbon',
@@ -71,72 +74,59 @@ interface StayBand {
 
         <div class="grid-area">
           <div class="ribbon">
-            <div
-              class="track"
-              [style.grid-template-columns]="'repeat(' + searchDays().length + ', minmax(38px, 1fr))'"
-            >
-              @for (d of searchDays(); track d; let i = $index) {
-                <div
-                  class="day"
-                  [style.grid-column]="i + 1"
-                  [class.free]="isFreeNight(i)"
-                  [class.booked]="!isFreeNight(i)"
-                  [class.sel]="isSelected(i)"
-                  [class.month-start]="i > 0 && firstOfMonth(d)"
-                  (pointerdown)="onDown(i, $event)"
-                  (pointerenter)="onEnter(i)"
-                >
-                  @if (i === 0 || firstOfMonth(d)) {
-                    <span class="mon">{{ month(d) }}</span>
-                  }
-                  <span class="wd">{{ weekday(d) }}</span>
-                  <span class="date-stack tnum">
-                    <span>{{ dateParts(d).day }}</span>
-                    <span>{{ dateParts(d).month }}</span>
-                    <span>{{ dateParts(d).year }}</span>
-                  </span>
-                </div>
-              }
+            <div class="scroll-body" [style.min-width.px]="gridMinWidth()">
+              <div class="labels" [style.grid-template-columns]="gridCols()">
+                @for (d of gridDays(); track d; let i = $index) {
+                  <div
+                    class="col-label"
+                    [style.grid-column]="i + 1"
+                    [class.extra]="i >= searchedCount()"
+                    [class.month-start]="i > 0 && firstOfMonth(d)"
+                  >
+                    @if (i === 0 || firstOfMonth(d)) {
+                      <span class="mon">{{ month(d) }}</span>
+                    }
+                    <span class="wd">{{ weekday(d) }}</span>
+                    <span class="date-label tnum">{{ formatDmyShort(d) }}</span>
+                  </div>
+                }
+              </div>
 
-              @if (hasSelection()) {
-                <div
-                  class="interval sel-band"
-                  [style.grid-column]="selStart()! + 1 + ' / span ' + (selEnd()! - selStart()!)"
-                >
-                  <span class="edge-stack tnum">
-                    <span>{{ dateParts(searchDays()[selStart()!]).day }}</span>
-                    <span>{{ dateParts(searchDays()[selStart()!]).month }}</span>
-                    <span>{{ dateParts(searchDays()[selStart()!]).year }}</span>
-                  </span>
-                  <span class="mid">Selected</span>
-                  <span class="edge-stack tnum">
-                    <span>{{ dateParts(searchDays()[selEnd()! - 1]).day }}</span>
-                    <span>{{ dateParts(searchDays()[selEnd()! - 1]).month }}</span>
-                    <span>{{ dateParts(searchDays()[selEnd()! - 1]).year }}</span>
-                  </span>
-                </div>
-              }
+              <div class="track" [style.grid-template-columns]="gridCols()">
+                @for (d of gridDays(); track d; let i = $index) {
+                  <div
+                    class="day"
+                    [style.grid-column]="i + 1"
+                    [class.free]="isFreeNight(i)"
+                    [class.booked]="!isFreeNight(i)"
+                    [class.sel]="isSelected(i)"
+                    [class.extra]="i >= searchedCount()"
+                    [class.month-start]="i > 0 && firstOfMonth(d)"
+                    (pointerdown)="onDown(i, $event)"
+                    (pointerenter)="onEnter(i)"
+                  ></div>
+                }
 
-              @for (band of stayBands(); track band.stay.id) {
-                <div
-                  class="interval stay-band"
-                  [class.active]="selectedStay()?.id === band.stay.id"
-                  [style.grid-column]="band.startIdx + 1 + ' / span ' + band.span"
-                  (click)="toggleStay(band.stay, $event)"
-                >
-                  <span class="edge-stack tnum">
-                    <span>{{ dateParts(band.stay.checkIn).day }}</span>
-                    <span>{{ dateParts(band.stay.checkIn).month }}</span>
-                    <span>{{ dateParts(band.stay.checkIn).year }}</span>
-                  </span>
-                  <span class="mid">{{ band.stay.guest || 'Reserved' }}</span>
-                  <span class="edge-stack tnum">
-                    <span>{{ dateParts(toInclusiveCheckOut(band.stay.checkOut)).day }}</span>
-                    <span>{{ dateParts(toInclusiveCheckOut(band.stay.checkOut)).month }}</span>
-                    <span>{{ dateParts(toInclusiveCheckOut(band.stay.checkOut)).year }}</span>
-                  </span>
-                </div>
-              }
+                @if (hasSelection()) {
+                  <div
+                    class="interval sel-band"
+                    [style.grid-column]="selStart()! + 1 + ' / span ' + (selEnd()! - selStart()!)"
+                  >
+                    <span class="mid">Selected</span>
+                  </div>
+                }
+
+                @for (band of stayBands(); track band.stay.id) {
+                  <div
+                    class="interval stay-band"
+                    [class.active]="selectedStay()?.id === band.stay.id"
+                    [style.grid-column]="band.startIdx + 1 + ' / span ' + band.span"
+                    (click)="toggleStay(band.stay, $event)"
+                  >
+                    <span class="mid">{{ band.stay.guest || 'Reserved' }}</span>
+                  </div>
+                }
+              </div>
             </div>
           </div>
         </div>
@@ -237,15 +227,43 @@ interface StayBand {
         overflow-x: auto;
         overflow-y: hidden;
         min-height: 100px;
-        padding-top: 18px;
+      }
+      .scroll-body {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-height: 100%;
+        width: 100%;
+      }
+      .labels {
+        display: grid;
+        flex: none;
+        padding-top: 16px;
+      }
+      .col-label {
+        position: relative;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 2px;
+        text-align: center;
+        min-width: 0;
+      }
+      .col-label.extra {
+        opacity: 0.72;
+      }
+      .col-label.month-start {
+        border-left: 2px solid color-mix(in srgb, var(--stone-line) 40%, transparent);
+        padding-left: 2px;
       }
       .track {
         position: relative;
         display: grid;
         grid-template-rows: 1fr;
         gap: 0;
-        min-width: 100%;
-        min-height: 100%;
+        flex: 1;
+        min-height: 72px;
         touch-action: none;
         align-content: stretch;
       }
@@ -256,15 +274,13 @@ interface StayBand {
         border: 1px solid var(--hairline);
         border-radius: 0;
         background: var(--slot-free-bg);
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        gap: 2px;
         cursor: pointer;
         user-select: none;
         z-index: 1;
         box-sizing: border-box;
+      }
+      .day.extra {
+        background: color-mix(in srgb, var(--slot-free-bg) 88%, var(--paper));
       }
       .day.free:hover {
         background: var(--slot-hover);
@@ -275,7 +291,6 @@ interface StayBand {
       }
       .day.sel {
         background: transparent;
-        color: inherit;
         z-index: 1;
       }
       .day.month-start {
@@ -283,45 +298,35 @@ interface StayBand {
       }
       .mon {
         position: absolute;
-        top: -18px;
+        top: -16px;
         left: 0;
         font-size: 10px;
         font-weight: 700;
         color: var(--ink-2);
+        white-space: nowrap;
       }
       .wd {
         font-size: 10px;
-        opacity: 0.75;
+        color: var(--ink-2);
+        opacity: 0.85;
       }
-      .date-stack,
-      .edge-stack {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        line-height: 1.05;
+      .date-label {
         font-size: 11px;
         font-weight: 700;
-      }
-      .edge-stack {
-        font-size: 9px;
-        flex: none;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
       }
       .interval {
         grid-row: 1;
         z-index: 2;
-        display: grid;
-        grid-template-columns: auto 1fr auto;
+        display: flex;
         align-items: center;
-        gap: 6px;
+        justify-content: center;
         padding: 0 8px;
         box-sizing: border-box;
         min-height: 100%;
-      }
-      .interval .edge {
-        font-size: 10px;
-        font-weight: 800;
-        white-space: nowrap;
-        flex: none;
       }
       .interval .mid {
         font-size: 10px;
@@ -391,12 +396,29 @@ export class DateRibbonComponent {
   private confirmSvc = inject(ConfirmService);
 
   protected searchDays = this.store.searchDays;
+
+  /** Searched night count (for marking padded columns). */
+  protected searchedCount = computed(() => this.searchDays().length);
+
+  /** At least MIN_GRID_DAYS columns from check-in so short ranges look balanced. */
+  protected gridDays = computed<string[]>(() => {
+    const searched = this.searchDays();
+    if (!searched.length) return [];
+    const ci = searched[0];
+    const count = Math.max(searched.length, MIN_GRID_DAYS);
+    return Array.from({ length: count }, (_, i) => addDays(ci, i));
+  });
+
+  protected gridCols = computed(
+    () => `repeat(${this.gridDays().length}, minmax(${DAY_COL_MIN_PX}px, 1fr))`,
+  );
+
+  protected gridMinWidth = computed(() => this.gridDays().length * DAY_COL_MIN_PX);
   protected weekday = weekdayShort;
   protected dayN = dayNum;
   protected month = monthShort;
   protected firstOfMonth = isFirstOfMonth;
-  protected formatDmy = formatDmy;
-  protected dateParts = dateStackParts;
+  protected formatDmyShort = formatDmyShort;
   protected stayRangeLabelFromStay = stayRangeLabelFromStay;
   protected toInclusiveCheckOut = toInclusiveCheckOut;
 
@@ -414,7 +436,7 @@ export class DateRibbonComponent {
   });
 
   protected stayBands = computed<StayBand[]>(() => {
-    const h = this.searchDays();
+    const h = this.gridDays();
     if (!h.length) return [];
     const rangeStart = h[0];
     const rangeEnd = h[h.length - 1];
@@ -442,17 +464,13 @@ export class DateRibbonComponent {
   );
   protected rangeText = computed(() => {
     if (!this.hasSelection()) return '';
-    const ci = this.searchDays()[this.selStart()!];
-    const coInc = this.searchDays()[this.selEnd()! - 1];
+    const ci = this.gridDays()[this.selStart()!];
+    const coInc = this.gridDays()[this.selEnd()! - 1];
     return stayRangeLabel(ci, coInc);
   });
 
-  dayLabel(ymd: string): string {
-    return formatDmy(ymd);
-  }
-
   stayAt(idx: number): Stay | null {
-    const d = this.searchDays()[idx];
+    const d = this.gridDays()[idx];
     return this.stays().find((s) => d >= s.checkIn && d < s.checkOut) ?? null;
   }
 
@@ -518,8 +536,8 @@ export class DateRibbonComponent {
 
   confirm(): void {
     if (!this.hasSelection()) return;
-    const ci = this.searchDays()[this.selStart()!];
-    const coInc = this.searchDays()[this.selEnd()! - 1];
+    const ci = this.gridDays()[this.selStart()!];
+    const coInc = this.gridDays()[this.selEnd()! - 1];
     this.authModal.requireAuth(async () => {
       try {
         const room = this.store.selectedRoom();

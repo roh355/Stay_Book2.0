@@ -52,14 +52,11 @@ export function formatDmy(ymd: string): string {
   return `${d.getDate()}/${d.getMonth() + 1}/${d.getFullYear()}`;
 }
 
-/** Vertical stack parts for day cells: 10/ · 7/ · 2026 */
-export function dateStackParts(ymd: string): { day: string; month: string; year: string } {
+/** dd/mm/yy display (2-digit year). */
+export function formatDmyShort(ymd: string): string {
   const d = fromYmd(ymd);
-  return {
-    day: `${d.getDate()}/`,
-    month: `${d.getMonth() + 1}/`,
-    year: String(d.getFullYear()),
-  };
+  const yy = String(d.getFullYear() % 100).padStart(2, '0');
+  return `${d.getDate()}/${d.getMonth() + 1}/${yy}`;
 }
 
 /** "Mon" short weekday. */
