@@ -34,9 +34,9 @@ interface StayBand {
   span: number;
 }
 
-/** Minimum day columns so short searches (e.g. 2 nights) still look balanced. */
-const MIN_GRID_DAYS = 7;
+/** Day column sizing — capped so short searches don't stretch across the panel. */
 const DAY_COL_MIN_PX = 64;
+const DAY_COL_MAX_PX = 132;
 
 @Component({
   selector: 'sb-date-ribbon',
@@ -80,7 +80,6 @@ const DAY_COL_MIN_PX = 64;
                   <div
                     class="col-label"
                     [style.grid-column]="i + 1"
-                    [class.extra]="i >= searchedCount()"
                     [class.month-start]="i > 0 && firstOfMonth(d)"
                   >
                     @if (i === 0 || firstOfMonth(d)) {
@@ -100,7 +99,6 @@ const DAY_COL_MIN_PX = 64;
                     [class.free]="isFreeNight(i)"
                     [class.booked]="!isFreeNight(i)"
                     [class.sel]="isSelected(i)"
-                    [class.extra]="i >= searchedCount()"
                     [class.month-start]="i > 0 && firstOfMonth(d)"
                     (pointerdown)="onDown(i, $event)"
                     (pointerenter)="onEnter(i)"
@@ -250,9 +248,6 @@ const DAY_COL_MIN_PX = 64;
         text-align: center;
         min-width: 0;
       }
-      .col-label.extra {
-        opacity: 0.72;
-      }
       .col-label.month-start {
         border-left: 2px solid color-mix(in srgb, var(--stone-line) 40%, transparent);
         padding-left: 2px;
@@ -278,9 +273,6 @@ const DAY_COL_MIN_PX = 64;
         user-select: none;
         z-index: 1;
         box-sizing: border-box;
-      }
-      .day.extra {
-        background: color-mix(in srgb, var(--slot-free-bg) 88%, var(--paper));
       }
       .day.free:hover {
         background: var(--slot-hover);
@@ -397,20 +389,12 @@ export class DateRibbonComponent {
 
   protected searchDays = this.store.searchDays;
 
-  /** Searched night count (for marking padded columns). */
-  protected searchedCount = computed(() => this.searchDays().length);
-
-  /** At least MIN_GRID_DAYS columns from check-in so short ranges look balanced. */
-  protected gridDays = computed<string[]>(() => {
-    const searched = this.searchDays();
-    if (!searched.length) return [];
-    const ci = searched[0];
-    const count = Math.max(searched.length, MIN_GRID_DAYS);
-    return Array.from({ length: count }, (_, i) => addDays(ci, i));
-  });
+  /** Grid shows exactly the searched range; columns are width-capped instead of padded. */
+  protected gridDays = computed<string[]>(() => this.searchDays());
 
   protected gridCols = computed(
-    () => `repeat(${this.gridDays().length}, minmax(${DAY_COL_MIN_PX}px, 1fr))`,
+    () =>
+      `repeat(${this.gridDays().length}, minmax(${DAY_COL_MIN_PX}px, ${DAY_COL_MAX_PX}px))`,
   );
 
   protected gridMinWidth = computed(() => this.gridDays().length * DAY_COL_MIN_PX);
