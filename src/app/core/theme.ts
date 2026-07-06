@@ -33,8 +33,9 @@ export const SCENE_THEMES: Record<ThemeName, SceneTheme> = {
   },
   dark: {
     stoneLine: 0x94a3b8,
-    fillLight: 0x252c38,
-    fillMid: 0x2f3846,
+    // Lifted well above the night-sky background so slabs stay readable.
+    fillLight: 0x4a5670,
+    fillMid: 0x5f6f96,
     sage: 0x34d399,
     clay: 0xfbbf24,
     slate: 0x818cf8,

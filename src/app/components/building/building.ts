@@ -282,6 +282,8 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
 
+  private edgeMat?: THREE.LineBasicMaterial;
+
   /** Jio logo on the top floor — shared material, map arrives async. */
   private logoMat = new THREE.MeshBasicMaterial({ transparent: true });
   private logoMeshes: THREE.Mesh[] = [];
@@ -417,7 +419,8 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
     const totalH = count * this.FLOOR_H;
 
     const slabGeo = new THREE.BoxGeometry(this.SLAB_W, this.FLOOR_H * 0.62, this.SLAB_D);
-    const edgeMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 });
+    this.edgeMat = new THREE.LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.18 });
+    const edgeMat = this.edgeMat;
 
     for (let floorNum = 1; floorNum <= count; floorNum++) {
       const f = floors.find((fl) => fl.number === floorNum) ?? {
@@ -486,9 +489,10 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
     };
   }
 
+  /** Near full building width; tall enough to straddle the top two floors. */
   private logoSize(): { w: number; h: number } {
-    const h = this.FLOOR_H * 0.5;
-    return { w: Math.min(this.SLAB_W * 0.88, h * this.logoAspect), h };
+    const w = this.SLAB_W * 0.96;
+    return { w, h: w / this.logoAspect };
   }
 
   /**
@@ -501,10 +505,13 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
     const geo = new THREE.PlaneGeometry(w, h);
     const offset = this.SLAB_D / 2 + 0.06;
 
+    // Centered on the seam between the top two floors so it spans both.
+    const yOffset = -this.FLOOR_H / 2;
+
     const front = new THREE.Mesh(geo, this.logoMat);
-    front.position.z = offset;
+    front.position.set(0, yOffset, offset);
     const back = new THREE.Mesh(geo, this.logoMat);
-    back.position.z = -offset;
+    back.position.set(0, yOffset, -offset);
     back.rotation.y = Math.PI;
 
     for (const m of [front, back]) {
@@ -529,14 +536,24 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
     const c = this.theme.scene();
     const sel = this.store.selectedFloorNumber();
     const selRoomId = this.store.selectedRoom()?.id;
+    const dark = this.theme.theme() === 'dark';
+
+    // Dark sky swallows black outlines — switch to light theme-lines at night.
+    if (this.edgeMat) {
+      this.edgeMat.color.setHex(dark ? c.stoneLine : 0x000000);
+      this.edgeMat.opacity = dark ? 0.45 : 0.18;
+    }
 
     for (const s of this.slabs) {
       const m = s.mesh.material as THREE.MeshStandardMaterial;
       const isSel = s.floorNumber === sel;
       m.color.setHex(isSel ? c.fillMid : c.fillLight);
+      // Alternate slab shades slightly so adjacent floors read as separate.
+      if (!isSel && s.floorNumber % 2 === 0) {
+        m.color.offsetHSL(0, 0, dark ? 0.045 : -0.035);
+      }
       m.emissive.setHex(isSel ? c.slate : 0x000000);
       m.emissiveIntensity = isSel ? 0.22 : 0;
-      s.mesh.position.z = isSel ? 0.5 : 0;
     }
 
     for (const rm of this.roomMeshes) {
