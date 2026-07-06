@@ -500,13 +500,16 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
    * shift and its unlit material ignores the highlight recolor, so selecting the
    * top floor never hides it. Front and back faces so it survives rotation.
    */
+  /** Logo bottom flush with the bottom of the top-floor slab. */
+  private logoYOffset(h: number): number {
+    return -(this.FLOOR_H * 0.62) / 2 + h / 2;
+  }
+
   private addLogoToSlab(slab: THREE.Mesh): void {
     const { w, h } = this.logoSize();
     const geo = new THREE.PlaneGeometry(w, h);
     const offset = this.SLAB_D / 2 + 0.06;
-
-    // Centered on the seam between the top two floors so it spans both.
-    const yOffset = -this.FLOOR_H / 2;
+    const yOffset = this.logoYOffset(h);
 
     const front = new THREE.Mesh(geo, this.logoMat);
     front.position.set(0, yOffset, offset);
@@ -528,6 +531,7 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
     for (const m of this.logoMeshes) {
       m.geometry.dispose();
       m.geometry = new THREE.PlaneGeometry(w, h);
+      m.position.y = this.logoYOffset(h);
       m.visible = true;
     }
   }
