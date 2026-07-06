@@ -282,6 +282,12 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
 
+  /** Jio logo on the top floor — shared material, map arrives async. */
+  private logoMat = new THREE.MeshBasicMaterial({ transparent: true });
+  private logoMeshes: THREE.Mesh[] = [];
+  private logoReady = false;
+  private logoAspect = 6.9; // width / height, corrected once the image loads
+
   private camDist = 48;
   private camY = 0;
   private lookX = 0;
@@ -371,6 +377,8 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
     dir.position.set(10, 20, 14);
     this.scene.add(amb, dir);
 
+    this.loadLogoTexture();
+
     this.build(this.store.floors());
     this.applyColors();
     this.measureFit(true);
@@ -402,6 +410,9 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
     this.root.position.set(0, this.BUILDING_ROOT_LIFT, 0);
     this.root.rotation.y = this.yaw;
 
+    for (const m of this.logoMeshes) m.geometry.dispose();
+    this.logoMeshes = [];
+
     const count = 10;
     const totalH = count * this.FLOOR_H;
 
@@ -420,6 +431,7 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
       (slab as any).userData = { floorNumber: f.number };
       this.root.add(slab);
       this.slabs.push({ mesh: slab, floorNumber: f.number });
+      if (floorNum === count) this.addLogoToSlab(slab);
 
       const edges = new THREE.LineSegments(new THREE.EdgesGeometry(slabGeo), edgeMat);
       edges.position.y = y;
@@ -438,6 +450,78 @@ export class BuildingComponent implements AfterViewInit, OnDestroy {
         this.root.add(mesh);
         this.roomMeshes.push({ mesh, room, floorNumber: f.number });
       });
+    }
+  }
+
+  /** Load the Jio logo and knock out its white/black background, keeping the writing. */
+  private loadLogoTexture(): void {
+    const img = new Image();
+    img.src = 'images/jio-institute-logo.png';
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth;
+      canvas.height = img.naturalHeight;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      const data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const px = data.data;
+      for (let i = 0; i < px.length; i += 4) {
+        const r = px[i];
+        const g = px[i + 1];
+        const b = px[i + 2];
+        const isWhite = r > 230 && g > 230 && b > 230;
+        const isBlack = r < 30 && g < 30 && b < 30;
+        if (isWhite || isBlack) px[i + 3] = 0;
+      }
+      ctx.putImageData(data, 0, 0);
+
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 8;
+      this.logoMat.map = tex;
+      this.logoMat.needsUpdate = true;
+      this.logoAspect = img.naturalWidth / img.naturalHeight;
+      this.logoReady = true;
+      this.refreshLogoMeshes();
+    };
+  }
+
+  private logoSize(): { w: number; h: number } {
+    const h = this.FLOOR_H * 0.5;
+    return { w: Math.min(this.SLAB_W * 0.88, h * this.logoAspect), h };
+  }
+
+  /**
+   * Mount the logo as children of the top slab: it follows the slab's selection
+   * shift and its unlit material ignores the highlight recolor, so selecting the
+   * top floor never hides it. Front and back faces so it survives rotation.
+   */
+  private addLogoToSlab(slab: THREE.Mesh): void {
+    const { w, h } = this.logoSize();
+    const geo = new THREE.PlaneGeometry(w, h);
+    const offset = this.SLAB_D / 2 + 0.06;
+
+    const front = new THREE.Mesh(geo, this.logoMat);
+    front.position.z = offset;
+    const back = new THREE.Mesh(geo, this.logoMat);
+    back.position.z = -offset;
+    back.rotation.y = Math.PI;
+
+    for (const m of [front, back]) {
+      m.visible = this.logoReady;
+      m.renderOrder = 5;
+      slab.add(m);
+      this.logoMeshes.push(m);
+    }
+  }
+
+  /** Apply the real image aspect once the texture has loaded. */
+  private refreshLogoMeshes(): void {
+    const { w, h } = this.logoSize();
+    for (const m of this.logoMeshes) {
+      m.geometry.dispose();
+      m.geometry = new THREE.PlaneGeometry(w, h);
+      m.visible = true;
     }
   }
 
