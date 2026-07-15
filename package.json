@@ -6,14 +6,19 @@
     "ng": "ng",
     "start": "ng serve",
     "server": "node server/index.js",
+    "start:prod": "node server/index.js",
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
+    "build:render": "prisma generate && ng build && prisma migrate deploy",
     "dev": "concurrently -n api,web -c blue,magenta \"npm run server\" \"npm start\"",
     "build": "ng build",
     "watch": "ng build --watch --configuration development"
   },
   "private": true,
+  "engines": {
+    "node": ">=22.0.0"
+  },
   "packageManager": "npm@10.9.8",
   "dependencies": {
     "@angular/animations": "^22.0.5",

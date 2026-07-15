@@ -1,6 +1,8 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const fs = require('node:fs');
+const path = require('node:path');
 const express = require('express');
 const cors = require('cors');
 
@@ -15,6 +17,8 @@ const {
 } = require('./auth');
 
 const app = express();
+const DIST_DIR = path.join(__dirname, '..', 'dist', 'staybook', 'browser');
+
 app.use(cors());
 app.use(express.json());
 app.use(attachUser);
@@ -101,6 +105,9 @@ function mapStay(row) {
 function publicUser(row) {
   return { id: row.id, username: row.username, name: row.name, role: row.role };
 }
+
+// ---------- health ----------
+app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // ---------- auth ----------
 app.post(
@@ -341,6 +348,18 @@ app.delete(
   }),
 );
 
+// ---------- frontend (production build) ----------
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found.' }));
+
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR));
+  app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api')) return next();
+    res.sendFile(path.join(DIST_DIR, 'index.html'));
+  });
+  console.log(`[staybook] Serving frontend from ${DIST_DIR}`);
+}
+
 app.use((err, _req, res, _next) => {
   console.error('[staybook]', err);
   res.status(500).json({ error: 'Internal server error.' });
@@ -351,7 +370,7 @@ async function boot() {
   await seed();
   const PORT = process.env.PORT || 3001;
   app.listen(PORT, () => {
-    console.log(`[staybook] API listening on http://localhost:${PORT}`);
+    console.log(`[staybook] Listening on http://localhost:${PORT}`);
   });
 }
 

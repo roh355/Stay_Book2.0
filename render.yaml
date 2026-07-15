@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: staybook
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build:render
+    startCommand: npm run start:prod
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: STAYBOOK_JWT_SECRET
+        generateValue: true
