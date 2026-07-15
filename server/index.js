@@ -4,7 +4,7 @@ const crypto = require('node:crypto');
 const express = require('express');
 const cors = require('cors');
 
-const { db } = require('./db');
+const { prisma } = require('./db');
 const { seed } = require('./seed');
 const {
   hashPassword,
@@ -19,45 +19,52 @@ app.use(cors());
 app.use(express.json());
 app.use(attachUser);
 
+function asyncHandler(fn) {
+  return (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+}
+
 // ---------- mappers ----------
 function mapRoom(row) {
   return {
     id: row.id,
     code: row.code,
-    floor: row.floor_number,
+    floor: row.floorNumber,
     capacity: row.capacity,
     amenities: {
-      naturalLight: !!row.natural_light,
-      videoConf: !!row.video_conf,
-      whiteboard: !!row.whiteboard,
+      naturalLight: row.naturalLight,
+      videoConf: row.videoConf,
+      whiteboard: row.whiteboard,
     },
   };
 }
 
-function floorsFor(kind) {
-  const building = db
-    .prepare('SELECT * FROM buildings WHERE kind = ?')
-    .get(kind);
+async function floorsFor(kind) {
+  const building = await prisma.building.findFirst({ where: { kind } });
   if (!building) return [];
-  const rooms = db
-    .prepare(
-      'SELECT * FROM rooms WHERE building_id = ? ORDER BY floor_number, code',
-    )
-    .all(building.id);
+  const rooms = await prisma.room.findMany({
+    where: { buildingId: building.id },
+    orderBy: [{ floorNumber: 'asc' }, { code: 'asc' }],
+  });
   const byFloor = new Map();
   for (const r of rooms) {
-    if (!byFloor.has(r.floor_number)) {
-      byFloor.set(r.floor_number, {
-        number: r.floor_number,
-        label: r.floor_label,
+    if (!byFloor.has(r.floorNumber)) {
+      byFloor.set(r.floorNumber, {
+        number: r.floorNumber,
+        label: r.floorLabel,
         rooms: [],
       });
     }
-    byFloor.get(r.floor_number).rooms.push(mapRoom(r));
+    byFloor.get(r.floorNumber).rooms.push(mapRoom(r));
   }
   const floors = [];
-  for (let n = 1; n <= building.floor_count; n++) {
-    floors.push(byFloor.get(n) || { number: n, label: String(n).padStart(2, '0'), rooms: [] });
+  for (let n = 1; n <= building.floorCount; n++) {
+    floors.push(
+      byFloor.get(n) || {
+        number: n,
+        label: String(n).padStart(2, '0'),
+        rooms: [],
+      },
+    );
   }
   return floors;
 }
@@ -65,29 +72,29 @@ function floorsFor(kind) {
 function mapBooking(row) {
   return {
     id: row.id,
-    roomId: row.room_id,
-    roomCode: row.room_code,
+    roomId: row.roomId,
+    roomCode: row.roomCode,
     date: row.date,
-    startSlot: row.start_slot,
-    endSlot: row.end_slot,
+    startSlot: row.startSlot,
+    endSlot: row.endSlot,
     topic: row.topic || undefined,
-    userId: row.user_id,
-    userName: row.user_name,
-    createdAt: row.created_at,
+    userId: row.userId,
+    userName: row.userName,
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
 function mapStay(row) {
   return {
     id: row.id,
-    roomId: row.room_id,
-    roomCode: row.room_code,
-    checkIn: row.check_in,
-    checkOut: row.check_out,
+    roomId: row.roomId,
+    roomCode: row.roomCode,
+    checkIn: row.checkIn,
+    checkOut: row.checkOut,
     guest: row.guest || undefined,
-    userId: row.user_id,
-    userName: row.user_name,
-    createdAt: row.created_at,
+    userId: row.userId,
+    userName: row.userName,
+    createdAt: row.createdAt.toISOString(),
   };
 }
 
@@ -96,188 +103,259 @@ function publicUser(row) {
 }
 
 // ---------- auth ----------
-app.post('/api/auth/register', (req, res) => {
-  const { username, password, name } = req.body || {};
-  if (!username || String(username).trim().length < 3) {
-    return res.status(400).json({ error: 'Username must be at least 3 characters.' });
-  }
-  if (!password || String(password).length < 4) {
-    return res.status(400).json({ error: 'Password must be at least 4 characters.' });
-  }
-  const uname = String(username).trim();
-  const existing = db.prepare('SELECT id FROM users WHERE username = ?').get(uname);
-  if (existing) return res.status(409).json({ error: 'That username is taken.' });
+app.post(
+  '/api/auth/register',
+  asyncHandler(async (req, res) => {
+    const { username, password, name } = req.body || {};
+    if (!username || String(username).trim().length < 3) {
+      return res
+        .status(400)
+        .json({ error: 'Username must be at least 3 characters.' });
+    }
+    if (!password || String(password).length < 4) {
+      return res
+        .status(400)
+        .json({ error: 'Password must be at least 4 characters.' });
+    }
+    const uname = String(username).trim();
+    const existing = await prisma.user.findUnique({ where: { username: uname } });
+    if (existing) return res.status(409).json({ error: 'That username is taken.' });
 
-  const user = {
-    id: `u-${crypto.randomUUID()}`,
-    username: uname,
-    name: (name && String(name).trim()) || uname,
-    role: 'user',
-  };
-  db.prepare(
-    'INSERT INTO users (id, username, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-  ).run(user.id, user.username, hashPassword(password), user.name, user.role, new Date().toISOString());
+    const user = {
+      id: `u-${crypto.randomUUID()}`,
+      username: uname,
+      name: (name && String(name).trim()) || uname,
+      role: 'user',
+    };
+    await prisma.user.create({
+      data: {
+        id: user.id,
+        username: user.username,
+        passwordHash: hashPassword(password),
+        name: user.name,
+        role: user.role,
+        createdAt: new Date(),
+      },
+    });
 
-  res.status(201).json({ token: signToken(user), user });
-});
+    res.status(201).json({ token: signToken(user), user });
+  }),
+);
 
-app.post('/api/auth/login', (req, res) => {
-  const { username, password } = req.body || {};
-  const row = db
-    .prepare('SELECT * FROM users WHERE username = ?')
-    .get(String(username || '').trim());
-  if (!row || !verifyPassword(String(password || ''), row.password_hash)) {
-    return res.status(401).json({ error: 'Wrong username or password.' });
-  }
-  const user = publicUser(row);
-  res.json({ token: signToken(user), user });
-});
+app.post(
+  '/api/auth/login',
+  asyncHandler(async (req, res) => {
+    const { username, password } = req.body || {};
+    const row = await prisma.user.findUnique({
+      where: { username: String(username || '').trim() },
+    });
+    if (!row || !verifyPassword(String(password || ''), row.passwordHash)) {
+      return res.status(401).json({ error: 'Wrong username or password.' });
+    }
+    const user = publicUser(row);
+    res.json({ token: signToken(user), user });
+  }),
+);
 
-app.get('/api/auth/me', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(req.user.id);
-  if (!row) return res.status(401).json({ error: 'Session expired.' });
-  res.json({ user: publicUser(row) });
-});
+app.get(
+  '/api/auth/me',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const row = await prisma.user.findUnique({ where: { id: req.user.id } });
+    if (!row) return res.status(401).json({ error: 'Session expired.' });
+    res.json({ user: publicUser(row) });
+  }),
+);
 
 // ---------- floors ----------
-app.get('/api/conference/floors', (_req, res) => res.json(floorsFor('conference')));
-app.get('/api/hostel/floors', (_req, res) => res.json(floorsFor('hostel')));
+app.get(
+  '/api/conference/floors',
+  asyncHandler(async (_req, res) => res.json(await floorsFor('conference'))),
+);
+app.get(
+  '/api/hostel/floors',
+  asyncHandler(async (_req, res) => res.json(await floorsFor('hostel'))),
+);
 
 // ---------- conference bookings ----------
-app.get('/api/bookings', (req, res) => {
-  const { date } = req.query;
-  const rows = date
-    ? db.prepare('SELECT * FROM bookings WHERE date = ? ORDER BY start_slot').all(date)
-    : db.prepare('SELECT * FROM bookings ORDER BY date, start_slot').all();
-  res.json(rows.map(mapBooking));
-});
+app.get(
+  '/api/bookings',
+  asyncHandler(async (req, res) => {
+    const { date } = req.query;
+    const rows = await prisma.booking.findMany({
+      where: date ? { date: String(date) } : undefined,
+      orderBy: date
+        ? { startSlot: 'asc' }
+        : [{ date: 'asc' }, { startSlot: 'asc' }],
+    });
+    res.json(rows.map(mapBooking));
+  }),
+);
 
-app.get('/api/bookings/mine', requireAuth, (req, res) => {
-  const rows = db
-    .prepare('SELECT * FROM bookings WHERE user_id = ? ORDER BY created_at DESC')
-    .all(req.user.id);
-  res.json(rows.map(mapBooking));
-});
+app.get(
+  '/api/bookings/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const rows = await prisma.booking.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(rows.map(mapBooking));
+  }),
+);
 
-app.post('/api/bookings', requireAuth, (req, res) => {
-  const { roomId, date, startSlot, endSlot, topic } = req.body || {};
-  const start = Number(startSlot);
-  const end = Number(endSlot);
-  if (!roomId || !date || !Number.isInteger(start) || !Number.isInteger(end) || end <= start) {
-    return res.status(400).json({ error: 'Invalid booking request.' });
-  }
-  const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId);
-  if (!room) return res.status(404).json({ error: 'Room not found.' });
+app.post(
+  '/api/bookings',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { roomId, date, startSlot, endSlot, topic } = req.body || {};
+    const start = Number(startSlot);
+    const end = Number(endSlot);
+    if (
+      !roomId ||
+      !date ||
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      end <= start
+    ) {
+      return res.status(400).json({ error: 'Invalid booking request.' });
+    }
+    const room = await prisma.room.findUnique({ where: { id: roomId } });
+    if (!room) return res.status(404).json({ error: 'Room not found.' });
 
-  // Overlap: start < existingEnd AND end > existingStart
-  const clash = db
-    .prepare(
-      'SELECT id FROM bookings WHERE room_id = ? AND date = ? AND start_slot < ? AND end_slot > ?',
-    )
-    .get(roomId, date, end, start);
-  if (clash) return res.status(409).json({ error: 'That time was just taken.' });
+    const clash = await prisma.booking.findFirst({
+      where: {
+        roomId,
+        date,
+        startSlot: { lt: end },
+        endSlot: { gt: start },
+      },
+      select: { id: true },
+    });
+    if (clash) return res.status(409).json({ error: 'That time was just taken.' });
 
-  const booking = {
-    id: `bk-${crypto.randomUUID()}`,
-    room_id: room.id,
-    building_id: room.building_id,
-    room_code: room.code,
-    date,
-    start_slot: start,
-    end_slot: end,
-    topic: (topic && String(topic).trim()) || null,
-    user_id: req.user.id,
-    user_name: req.user.name,
-    created_at: new Date().toISOString(),
-  };
-  db.prepare(
-    `INSERT INTO bookings
-      (id, room_id, building_id, room_code, date, start_slot, end_slot, topic, user_id, user_name, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    booking.id, booking.room_id, booking.building_id, booking.room_code,
-    booking.date, booking.start_slot, booking.end_slot, booking.topic,
-    booking.user_id, booking.user_name, booking.created_at,
-  );
-  res.status(201).json(mapBooking(booking));
-});
+    const booking = await prisma.booking.create({
+      data: {
+        id: `bk-${crypto.randomUUID()}`,
+        roomId: room.id,
+        buildingId: room.buildingId,
+        roomCode: room.code,
+        date,
+        startSlot: start,
+        endSlot: end,
+        topic: (topic && String(topic).trim()) || null,
+        userId: req.user.id,
+        userName: req.user.name,
+        createdAt: new Date(),
+      },
+    });
+    res.status(201).json(mapBooking(booking));
+  }),
+);
 
-app.delete('/api/bookings/:id', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT * FROM bookings WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: 'Booking not found.' });
-  if (row.user_id !== req.user.id && req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Not your booking.' });
-  }
-  db.prepare('DELETE FROM bookings WHERE id = ?').run(req.params.id);
-  res.status(204).end();
-});
+app.delete(
+  '/api/bookings/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const row = await prisma.booking.findUnique({ where: { id: req.params.id } });
+    if (!row) return res.status(404).json({ error: 'Booking not found.' });
+    if (row.userId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Not your booking.' });
+    }
+    await prisma.booking.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  }),
+);
 
 // ---------- hostel stays ----------
-app.get('/api/stays', (_req, res) => {
-  const rows = db.prepare('SELECT * FROM stays ORDER BY check_in').all();
-  res.json(rows.map(mapStay));
-});
+app.get(
+  '/api/stays',
+  asyncHandler(async (_req, res) => {
+    const rows = await prisma.stay.findMany({ orderBy: { checkIn: 'asc' } });
+    res.json(rows.map(mapStay));
+  }),
+);
 
-app.get('/api/stays/mine', requireAuth, (req, res) => {
-  const rows = db
-    .prepare('SELECT * FROM stays WHERE user_id = ? ORDER BY created_at DESC')
-    .all(req.user.id);
-  res.json(rows.map(mapStay));
-});
+app.get(
+  '/api/stays/mine',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const rows = await prisma.stay.findMany({
+      where: { userId: req.user.id },
+      orderBy: { createdAt: 'desc' },
+    });
+    res.json(rows.map(mapStay));
+  }),
+);
 
-app.post('/api/stays', requireAuth, (req, res) => {
-  const { roomId, checkIn, checkOut, guest } = req.body || {};
-  if (!roomId || !checkIn || !checkOut || checkOut <= checkIn) {
-    return res.status(400).json({ error: 'Invalid stay request.' });
-  }
-  const room = db.prepare('SELECT * FROM rooms WHERE id = ?').get(roomId);
-  if (!room) return res.status(404).json({ error: 'Room not found.' });
+app.post(
+  '/api/stays',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const { roomId, checkIn, checkOut, guest } = req.body || {};
+    if (!roomId || !checkIn || !checkOut || checkOut <= checkIn) {
+      return res.status(400).json({ error: 'Invalid stay request.' });
+    }
+    const room = await prisma.room.findUnique({ where: { id: roomId } });
+    if (!room) return res.status(404).json({ error: 'Room not found.' });
 
-  // Night overlap: checkIn < existingCheckOut AND checkOut > existingCheckIn
-  const clash = db
-    .prepare(
-      'SELECT id FROM stays WHERE room_id = ? AND check_in < ? AND check_out > ?',
-    )
-    .get(roomId, checkOut, checkIn);
-  if (clash) return res.status(409).json({ error: 'Those nights were just taken.' });
+    const clash = await prisma.stay.findFirst({
+      where: {
+        roomId,
+        checkIn: { lt: checkOut },
+        checkOut: { gt: checkIn },
+      },
+      select: { id: true },
+    });
+    if (clash) return res.status(409).json({ error: 'Those nights were just taken.' });
 
-  const stay = {
-    id: `st-${crypto.randomUUID()}`,
-    room_id: room.id,
-    building_id: room.building_id,
-    room_code: room.code,
-    check_in: checkIn,
-    check_out: checkOut,
-    guest: (guest && String(guest).trim()) || null,
-    user_id: req.user.id,
-    user_name: req.user.name,
-    created_at: new Date().toISOString(),
-  };
-  db.prepare(
-    `INSERT INTO stays
-      (id, room_id, building_id, room_code, check_in, check_out, guest, user_id, user_name, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-  ).run(
-    stay.id, stay.room_id, stay.building_id, stay.room_code,
-    stay.check_in, stay.check_out, stay.guest,
-    stay.user_id, stay.user_name, stay.created_at,
-  );
-  res.status(201).json(mapStay(stay));
-});
+    const stay = await prisma.stay.create({
+      data: {
+        id: `st-${crypto.randomUUID()}`,
+        roomId: room.id,
+        buildingId: room.buildingId,
+        roomCode: room.code,
+        checkIn,
+        checkOut,
+        guest: (guest && String(guest).trim()) || null,
+        userId: req.user.id,
+        userName: req.user.name,
+        createdAt: new Date(),
+      },
+    });
+    res.status(201).json(mapStay(stay));
+  }),
+);
 
-app.delete('/api/stays/:id', requireAuth, (req, res) => {
-  const row = db.prepare('SELECT * FROM stays WHERE id = ?').get(req.params.id);
-  if (!row) return res.status(404).json({ error: 'Stay not found.' });
-  if (row.user_id !== req.user.id && req.user.role !== 'admin') {
-    return res.status(403).json({ error: 'Not your stay.' });
-  }
-  db.prepare('DELETE FROM stays WHERE id = ?').run(req.params.id);
-  res.status(204).end();
+app.delete(
+  '/api/stays/:id',
+  requireAuth,
+  asyncHandler(async (req, res) => {
+    const row = await prisma.stay.findUnique({ where: { id: req.params.id } });
+    if (!row) return res.status(404).json({ error: 'Stay not found.' });
+    if (row.userId !== req.user.id && req.user.role !== 'admin') {
+      return res.status(403).json({ error: 'Not your stay.' });
+    }
+    await prisma.stay.delete({ where: { id: req.params.id } });
+    res.status(204).end();
+  }),
+);
+
+app.use((err, _req, res, _next) => {
+  console.error('[staybook]', err);
+  res.status(500).json({ error: 'Internal server error.' });
 });
 
 // ---------- boot ----------
-seed();
-const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`[staybook] API listening on http://localhost:${PORT}`);
+async function boot() {
+  await seed();
+  const PORT = process.env.PORT || 3001;
+  app.listen(PORT, () => {
+    console.log(`[staybook] API listening on http://localhost:${PORT}`);
+  });
+}
+
+boot().catch((err) => {
+  console.error('[staybook] Failed to start:', err);
+  process.exit(1);
 });

@@ -6,6 +6,9 @@
     "ng": "ng",
     "start": "ng serve",
     "server": "node server/index.js",
+    "postinstall": "prisma generate",
+    "db:migrate": "prisma migrate dev",
+    "db:push": "prisma db push",
     "dev": "concurrently -n api,web -c blue,magenta \"npm run server\" \"npm start\"",
     "build": "ng build",
     "watch": "ng build --watch --configuration development"
@@ -22,8 +25,10 @@
     "@angular/material": "^22.0.3",
     "@angular/platform-browser": "^22.0.0",
     "@angular/router": "^22.0.0",
+    "@prisma/client": "^6.19.3",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
     "express": "^4.22.2",
     "jsonwebtoken": "^9.0.3",
     "rxjs": "~7.8.0",
@@ -37,6 +42,7 @@
     "@types/three": "^0.185.0",
     "concurrently": "^9.2.1",
     "prettier": "^3.8.1",
+    "prisma": "^6.19.3",
     "puppeteer-core": "^23.11.1",
     "typescript": "~6.0.2"
   }

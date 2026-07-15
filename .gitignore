@@ -44,6 +44,8 @@ __screenshots__/
 Thumbs.db
 
 # StayBook
+/.tooling
+.env
+/generated
 /server/staybook.db
 /server/staybook.db-*
-/.tooling

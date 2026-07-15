@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id
+  username     String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  role         String    @default("user")
+  createdAt    DateTime  @map("created_at")
+  bookings     Booking[]
+  stays        Stay[]
+
+  @@map("users")
+}
+
+model Building {
+  id         String   @id
+  kind       String
+  name       String
+  floorCount Int      @map("floor_count")
+  createdAt  DateTime @map("created_at")
+  rooms      Room[]
+
+  @@map("buildings")
+}
+
+model Room {
+  id           String    @id
+  buildingId   String    @map("building_id")
+  buildingKind String    @map("building_kind")
+  buildingName String    @map("building_name")
+  floorNumber  Int       @map("floor_number")
+  floorLabel   String    @map("floor_label")
+  code         String
+  capacity     Int
+  naturalLight Boolean   @default(false) @map("natural_light")
+  videoConf    Boolean   @default(false) @map("video_conf")
+  whiteboard   Boolean   @default(false) @map("whiteboard")
+  building     Building  @relation(fields: [buildingId], references: [id])
+  bookings     Booking[]
+  stays        Stay[]
+
+  @@index([buildingId], map: "idx_rooms_building")
+  @@map("rooms")
+}
+
+model Booking {
+  id         String   @id
+  roomId     String   @map("room_id")
+  buildingId String   @map("building_id")
+  roomCode   String   @map("room_code")
+  date       String
+  startSlot  Int      @map("start_slot")
+  endSlot    Int      @map("end_slot")
+  topic      String?
+  userId     String   @map("user_id")
+  userName   String   @map("user_name")
+  createdAt  DateTime @map("created_at")
+  room       Room     @relation(fields: [roomId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([date], map: "idx_bookings_date")
+  @@map("bookings")
+}
+
+model Stay {
+  id         String   @id
+  roomId     String   @map("room_id")
+  buildingId String   @map("building_id")
+  roomCode   String   @map("room_code")
+  checkIn    String   @map("check_in")
+  checkOut   String   @map("check_out")
+  guest      String?
+  userId     String   @map("user_id")
+  userName   String   @map("user_name")
+  createdAt  DateTime @map("created_at")
+  room       Room     @relation(fields: [roomId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+
+  @@index([roomId], map: "idx_stays_room")
+  @@map("stays")
+}

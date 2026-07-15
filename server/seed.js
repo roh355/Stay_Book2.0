@@ -1,7 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const { db, transaction } = require('./db');
+const { prisma } = require('./db');
 const { hashPassword } = require('./auth');
 const { rngFrom } = require('./prng');
 
@@ -10,10 +10,6 @@ const CAPACITIES = [2, 4, 4, 6, 8, 10, 12];
 const FLOORS = 10;
 const SLOT_COUNT = 48; // 00:00 -> 24:00 in 30-min slots
 const HOSTEL_HORIZON_DAYS = 60;
-
-function now() {
-  return new Date().toISOString();
-}
 
 function pad2(n) {
   return String(n).padStart(2, '0');
@@ -48,63 +44,59 @@ function buildRoomsFor(kind) {
         floorLabel: label,
         code: `${label}${letter}`,
         capacity: rr.pick(CAPACITIES),
-        naturalLight: rr.chance(0.6) ? 1 : 0,
-        videoConf: rr.chance(0.5) ? 1 : 0,
-        whiteboard: rr.chance(0.7) ? 1 : 0,
+        naturalLight: rr.chance(0.6),
+        videoConf: rr.chance(0.5),
+        whiteboard: rr.chance(0.7),
       });
     }
   }
   return rooms;
 }
 
-function seed() {
-  const already = db.prepare('SELECT COUNT(*) AS n FROM buildings').get();
-  if (already && already.n > 0) return; // idempotent
+async function seed() {
+  const existing = await prisma.building.count();
+  if (existing > 0) return;
 
-  transaction(() => {
-    const created = now();
+  const created = new Date();
 
-    // ---- Buildings ----
+  await prisma.$transaction(
+    async (tx) => {
     const buildings = [
       { id: 'b-conference', kind: 'conference', name: 'Skyline Conference Center' },
       { id: 'b-hostel', kind: 'hostel', name: 'Skyline Residences' },
     ];
-    const insBuilding = db.prepare(
-      'INSERT INTO buildings (id, kind, name, floor_count, created_at) VALUES (?, ?, ?, ?, ?)',
-    );
-    for (const b of buildings) insBuilding.run(b.id, b.kind, b.name, FLOORS, created);
 
-    // ---- Rooms ----
-    const insRoom = db.prepare(
-      `INSERT INTO rooms
-        (id, building_id, building_kind, building_name, floor_number, floor_label, code, capacity, natural_light, video_conf, whiteboard)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
+    await tx.building.createMany({
+      data: buildings.map((b) => ({
+        id: b.id,
+        kind: b.kind,
+        name: b.name,
+        floorCount: FLOORS,
+        createdAt: created,
+      })),
+    });
+
     const roomsByKind = {};
     for (const b of buildings) {
       const rooms = buildRoomsFor(b.kind);
       roomsByKind[b.kind] = rooms;
-      for (const r of rooms) {
-        insRoom.run(
-          r.id,
-          r.buildingId,
-          r.buildingKind,
-          b.name,
-          r.floorNumber,
-          r.floorLabel,
-          r.code,
-          r.capacity,
-          r.naturalLight,
-          r.videoConf,
-          r.whiteboard,
-        );
-      }
+      await tx.room.createMany({
+        data: rooms.map((r) => ({
+          id: r.id,
+          buildingId: r.buildingId,
+          buildingKind: r.buildingKind,
+          buildingName: b.name,
+          floorNumber: r.floorNumber,
+          floorLabel: r.floorLabel,
+          code: r.code,
+          capacity: r.capacity,
+          naturalLight: r.naturalLight,
+          videoConf: r.videoConf,
+          whiteboard: r.whiteboard,
+        })),
+      });
     }
 
-    // ---- Users ----
-    const insUser = db.prepare(
-      'INSERT INTO users (id, username, password_hash, name, role, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    );
     const demoUsers = [
       { id: 'u-admin', username: 'admin', name: 'Ada Admin', role: 'admin' },
       { id: 'u-maya', username: 'maya', name: 'Maya Rivera', role: 'user' },
@@ -112,16 +104,17 @@ function seed() {
       { id: 'u-priya', username: 'priya', name: 'Priya Sharma', role: 'user' },
     ];
     const pwHash = hashPassword('password');
-    for (const u of demoUsers) {
-      insUser.run(u.id, u.username, pwHash, u.name, u.role, created);
-    }
+    await tx.user.createMany({
+      data: demoUsers.map((u) => ({
+        id: u.id,
+        username: u.username,
+        passwordHash: pwHash,
+        name: u.name,
+        role: u.role,
+        createdAt: created,
+      })),
+    });
 
-    // ---- Demo conference bookings (today-2 .. today+30) ----
-    const insBooking = db.prepare(
-      `INSERT INTO bookings
-        (id, room_id, building_id, room_code, date, start_slot, end_slot, topic, user_id, user_name, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
     const topics = [
       'Sprint planning',
       'Design review',
@@ -136,9 +129,10 @@ function seed() {
     const confRooms = roomsByKind.conference;
     const today = new Date();
     const brng = rngFrom('conference:bookings');
+    const bookingRows = [];
+
     for (let dayOffset = -2; dayOffset <= 30; dayOffset++) {
       const date = ymd(addDays(today, dayOffset));
-      // a handful of bookings per day, spread across rooms
       const perDay = brng.int(4, 9);
       const takenPerRoom = new Map();
       for (let i = 0; i < perDay; i++) {
@@ -146,35 +140,29 @@ function seed() {
         const start = brng.int(0, SLOT_COUNT - 2);
         const len = brng.pick([1, 2, 2, 3, 4]);
         const end = Math.min(SLOT_COUNT, start + len);
-        // avoid obvious self-overlap within seed for the same room/day
         const ranges = takenPerRoom.get(room.id) || [];
         const overlaps = ranges.some((r) => start < r[1] && end > r[0]);
         if (overlaps) continue;
         ranges.push([start, end]);
         takenPerRoom.set(room.id, ranges);
         const user = brng.pick(demoUsers);
-        insBooking.run(
-          `bk-${crypto.randomUUID()}`,
-          room.id,
-          room.buildingId,
-          room.code,
+        bookingRows.push({
+          id: `bk-${crypto.randomUUID()}`,
+          roomId: room.id,
+          buildingId: room.buildingId,
+          roomCode: room.code,
           date,
-          start,
-          end,
-          brng.pick(topics),
-          user.id,
-          user.name,
-          created,
-        );
+          startSlot: start,
+          endSlot: end,
+          topic: brng.pick(topics),
+          userId: user.id,
+          userName: user.name,
+          createdAt: created,
+        });
       }
     }
+    if (bookingRows.length) await tx.booking.createMany({ data: bookingRows });
 
-    // ---- Demo hostel stays across the 60-day horizon ----
-    const insStay = db.prepare(
-      `INSERT INTO stays
-        (id, room_id, building_id, room_code, check_in, check_out, guest, user_id, user_name, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
     const guests = [
       'J. Okafor',
       'S. Bianchi',
@@ -185,6 +173,8 @@ function seed() {
     ];
     const hostelRooms = roomsByKind.hostel;
     const srng = rngFrom('hostel:stays');
+    const stayRows = [];
+
     for (const room of hostelRooms) {
       const takenRanges = [];
       const numStays = srng.int(1, 4);
@@ -201,21 +191,24 @@ function seed() {
         if (overlaps) continue;
         takenRanges.push([checkInOffset, checkOutOffset]);
         const user = srng.pick(demoUsers);
-        insStay.run(
-          `st-${crypto.randomUUID()}`,
-          room.id,
-          room.buildingId,
-          room.code,
-          ymd(addDays(today, checkInOffset)),
-          ymd(addDays(today, checkOutOffset)),
-          srng.pick(guests),
-          user.id,
-          user.name,
-          created,
-        );
+        stayRows.push({
+          id: `st-${crypto.randomUUID()}`,
+          roomId: room.id,
+          buildingId: room.buildingId,
+          roomCode: room.code,
+          checkIn: ymd(addDays(today, checkInOffset)),
+          checkOut: ymd(addDays(today, checkOutOffset)),
+          guest: srng.pick(guests),
+          userId: user.id,
+          userName: user.name,
+          createdAt: created,
+        });
       }
     }
-  });
+    if (stayRows.length) await tx.stay.createMany({ data: stayRows });
+    },
+    { timeout: 120_000 },
+  );
 
   console.log('[seed] StayBook demo data created.');
 }
