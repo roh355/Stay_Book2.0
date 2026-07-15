@@ -10,7 +10,7 @@
     "postinstall": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
-    "build:render": "prisma generate && ng build && prisma migrate deploy",
+    "build:render": "prisma generate && npx ng build && prisma migrate deploy",
     "dev": "concurrently -n api,web -c blue,magenta \"npm run server\" \"npm start\"",
     "build": "ng build",
     "watch": "ng build --watch --configuration development"
